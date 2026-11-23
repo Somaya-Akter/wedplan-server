@@ -1,58 +1,70 @@
 import dotenv from "dotenv";
-import { MongoClient } from "mongodb";
 import { betterAuth } from "better-auth";
-import { mongodbAdapter } from "@better-auth/mongo-adapter";
+import { mongodbAdapter } from "better-auth/adapters/mongodb";
+import { MongoClient } from "mongodb";
 
 dotenv.config();
 
 const mongoClient = new MongoClient(process.env.MONGODB_URI);
+
 const db = mongoClient.db("wedplan");
 
-const googleEnabled =
-  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET;
+const clientUrl =
+  process.env.CLIENT_URL ||
+  "https://wedplan-client-cry2.vercel.app";
+
+const serverUrl =
+  process.env.BETTER_AUTH_URL ||
+  "https://wedplan-server-4ua0.onrender.com";
 
 export const auth = betterAuth({
-  secret: process.env.BETTER_AUTH_SECRET,
-
-  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:5000",
-
-  trustedOrigins: [
-    process.env.CLIENT_URL || "http://localhost:3000",
-  ],
-
   database: mongodbAdapter(db, {
     client: mongoClient,
   }),
 
+  baseURL: serverUrl,
+
+  basePath: "/api/auth",
+
+  secret: process.env.BETTER_AUTH_SECRET,
+
+  trustedOrigins: [
+    "http://localhost:3000",
+    "https://wedplan-client-cry2.vercel.app",
+    clientUrl,
+  ].filter(Boolean),
+
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 6,
-    maxPasswordLength: 128,
+    autoSignIn: true,
   },
 
-  socialProviders: googleEnabled
-    ? {
-        google: {
-          clientId: process.env.GOOGLE_CLIENT_ID,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        },
-      }
-    : {},
+  socialProviders:
+    process.env.GOOGLE_CLIENT_ID &&
+    process.env.GOOGLE_CLIENT_SECRET
+      ? {
+          google: {
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+          },
+        }
+      : {},
 
   user: {
     additionalFields: {
       role: {
-        type: ["customer", "vendor", "admin"],
+        type: "string",
         required: false,
         defaultValue: "customer",
-        input: false,
+        input: true,
       },
 
       requestedRole: {
-        type: ["customer", "vendor"],
+        type: "string",
         required: false,
+        defaultValue: "customer",
         input: true,
-        returned: false,
       },
 
       isBlocked: {
@@ -65,18 +77,19 @@ export const auth = betterAuth({
       businessName: {
         type: "string",
         required: false,
+        defaultValue: "",
         input: true,
       },
 
       subscriptionPlan: {
-        type: ["Free", "Premium"],
+        type: "string",
         required: false,
         defaultValue: "Free",
         input: false,
       },
 
       subscriptionExpiresAt: {
-        type: "string",
+        type: "date",
         required: false,
         input: false,
       },
@@ -87,15 +100,20 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (user) => {
-          const selectedRole =
-            user.requestedRole === "vendor" ? "vendor" : "customer";
+          const requestedRole = String(
+            user.requestedRole || user.role || "customer"
+          ).toLowerCase();
 
-          const { requestedRole, ...safeUser } = user;
+          const safeRole =
+            requestedRole === "vendor"
+              ? "vendor"
+              : "customer";
 
           return {
             data: {
-              ...safeUser,
-              role: selectedRole,
+              ...user,
+              role: safeRole,
+              requestedRole: safeRole,
               isBlocked: false,
               subscriptionPlan: "Free",
             },
@@ -106,8 +124,16 @@ export const auth = betterAuth({
   },
 
   advanced: {
-    database: {
-      joins: true,
+    useSecureCookies:
+      process.env.NODE_ENV === "production",
+
+    defaultCookieAttributes: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite:
+        process.env.NODE_ENV === "production"
+          ? "none"
+          : "lax",
     },
   },
 });
